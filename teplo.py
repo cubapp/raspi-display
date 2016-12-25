@@ -5,7 +5,7 @@ import time
 import requests
 import datetime
 import lnetatmo
-  
+import RPi.GPIO as GPIO  
 
 # Define display constants
 SLEEPTIME = 1 # secs to display 
@@ -38,6 +38,18 @@ E_DELAY = 0.0006
 #Open I2C interface
 #bus = smbus.SMBus(0)  # Rev 1 Pi uses 0
 bus = smbus.SMBus(1) # Rev 2 Pi uses 1
+
+
+#nastaveni Backlight pomoci GPIO10 (19.pin)
+
+GPIO.setmode(GPIO.BOARD)  # choose BCM or BOARD numbering schemes. I use BCM
+
+GPIO.setup(19, GPIO.IN)# set GPIO 19 as input
+
+# Nastaveni nadmorske vysky: Meters above the sea
+mnm = 330 
+
+
 
 def lcd_init():
   # Initialise display
@@ -99,13 +111,21 @@ def main():
     dvorek = "000"
     puda   = "000"
 
-    try:
-      req = requests.get('http://192.168.1.20/tep.txt',timeout=10)
-      teplo = req.text.rstrip()
-    except requests.exceptions.RequestException as req:
+    try:	
+      reqt = requests.get('http://www.t1.cz/puda.temp',timeout=10)
+      esp8266 = reqt.text.rstrip()
+      tlak = esp8266.split(' ')
+      akt = float(tlak[0][:-2])
+      atm = float(tlak[1][:-3])
+      # Math Expression to count pressure to the sea level:
+      # ( pressure * 9.80665 * meters_above_sea ) / (273 + actual_temperature + (meters_above_sea/400)) + pressure
+      vypocet = (atm * 9.80665 * mnm)/(287 * (273 + akt + (mnm/400))) + atm
+      tlak_hladina = int(round(vypocet))
+      esp_line = "ESP: "+str(akt)+"C, "+str(tlak_hladina)+"hPa"
+    except requests.exceptions.RequestException as reqt:
       print datumcas
-      print req
-      teplo = "8-("
+      print reqt
+      esp8266 = "ESP nejede"
 
     try:
       # 1 : Authenticate NetAtmo
@@ -117,17 +137,27 @@ def main():
 
     dvorek = devList.lastData("Plzenska")['dvorek']['Temperature']
     puda = devList.lastData("Plzenska")['puda']['Temperature']
-    netatmo = str(dvorek)+"/"+str(puda)
+    netatmo = str(dvorek)+", "+str(puda)
     datum = datetime.datetime.now().strftime("Date: %Y-%m-%d")
     fo = open(TEMPERFILE, "w")
     fo.write( netatmo );
     fo.close()
     for i in range (REVOL):
-      cas = datetime.datetime.now().strftime(" Cas: %H:%M:%S")
-      lcd_string("RasPI,Dvur,Puda: "+str(i),LCD_LINE_1)
-      lcd_string(teplo+", "+netatmo,LCD_LINE_2)
-      lcd_string(cas,LCD_LINE_3)
-      lcd_string(datum,LCD_LINE_4)
+      if (GPIO.input(19)):
+	LCD_BACKLIGHT  = 0x08  # On
+      else:
+	LCD_BACKLIGHT = 0x00  # Off
+
+      #print("LCD Backlight")
+      #print(LCD_BACKLIGHT)
+      #lcd_byte(0x0C, LCD_CMD)
+
+      cas = datetime.datetime.now().strftime("%H:%M:%S %d.%m.%Y")
+      lcd_string("Venku: "+str(dvorek)+"C..W"+str(i),LCD_LINE_1)
+      lcd_string(" Puda: "+str(puda)+"C",LCD_LINE_2)
+      lcd_string(esp_line,LCD_LINE_3)
+      lcd_string(cas,LCD_LINE_4)
+
       time.sleep(SLEEPTIME)
 
 #End of while
@@ -141,4 +171,3 @@ if __name__ == '__main__':
     pass
   finally:
     lcd_byte(0x01, LCD_CMD)
-
